@@ -1,1 +1,2 @@
 # -Weather-forecasting-using-time-series-analysis
+### Critically reviewed the principles, theories, algorithms, and techniques used in Data Mining and Machine Learning then applied them creatively to solve complex problems. Applied data mining and machine learning techniques to real-world datasets, including data preprocessing, feature selection, model selection, performance evaluation, and interpretation of results, and demonstrated the ability to deal with complex issues systematically.
