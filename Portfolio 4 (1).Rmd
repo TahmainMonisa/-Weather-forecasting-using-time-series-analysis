@@ -1,0 +1,370 @@
+---
+title: "Portfolio 4"
+author: "Tahmain Akther Monisa"
+date: "2024-05-09"
+output: html_document
+---
+
+***Installing and Loading Required Libraries*** ***Importing and Pre-processing Data***
+
+```{r}
+library(caret)
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(ggplot2)
+library(gridExtra)
+library(e1071)
+library(randomForest)
+library(corrplot)
+library(rpart)
+library(tseries)
+library(corrplot)
+library(reshape2)
+
+# Create an empty vector to store the results
+DATETIME <- Q2 <- PSFC <- U10 <- V10 <- Q2 <- RAINC <- RAINNC <- SNOW <- TSLB <- SMOIS <- c()
+
+getwd()
+setwd("C:\\")
+
+#Load the dataset
+data <- read.csv("WRFdata_May2023.csv", header = TRUE)
+
+#Selected location
+lat <- "51.409"
+long <- "-7.344"
+
+#Find the row indices of selected location
+indices <- which(data$X == lat & data$X.1 == long)
+
+# Extract 300 rows 
+start_index <- max(1, indices - 150)
+end_index <- min(nrow(data), indices + 150) 
+selected_rows <- data[start_index:end_index, ]
+
+data <- data.frame(selected_rows)
+
+
+# Convert all columns to numeric 
+data <- cbind(data[, 1:2], as.data.frame(lapply(data[, -(1:2)], as.numeric)))
+
+#Check for missing values
+missing_values <- sum(is.na(data))
+
+data <- cbind(data[, 1:2], as.data.frame(apply(data[, -c(1, 2)], 2, function(x) replace(x, is.na(x), mean(x, na.rm = TRUE)))))
+
+missing_values_ami <- sum(is.na(data[,-c(1, 2)]))
+
+```
+
+***Exploratory Data Analysis***
+
+```{r}
+#Univariate analysis 
+
+# Histogram of Skin temperature
+hist(data[,3], main= "Histogram of Skin temperature at X01.05.2018.00.00", xlab = "Skin temperature")
+
+# Histogram of Surface pressure
+hist(data[,4], main= "Histogram of Surface pressure at X01.05.2018.00.00", xlab = "Surface pressure")
+
+# Histogram of X component of wind at 10m
+hist(data[,5], main= "Histogram of X component of wind at 10m at X01.05.2018.00.00", xlab = "X component of wind at 10m")
+
+# Histogram of Y component of wind at 10m 
+hist(data[,6], main= "Histogram of Y component of wind at 10m at X01.05.2018.00.00", xlab = "Y component of wind at 10m")
+
+# Histogram of 2- meter specific humidity 
+hist(data[,7], main= "Histogram of 2- meter specific humidity at X01.05.2018.00.00", xlab = "2- meter specific humidity")
+
+# Histogram of Convective rain (Accumulated precipitation)  
+hist(data[,8], main= "Histogram of Convective rain (Accumulated precipitation) at X01.05.2018.00.00", xlab = "Convective rain (Accumulated precipitation)")
+
+# Histogram of Non-convective rain 
+hist(data[,9], main= "Histogram of Non-convective rain at X01.05.2018.00.00", xlab = "Non-convective rain")
+
+# Histogram of Snow water equivalent
+hist(data[,10], main= "Histogram of Snow water equivalent at X01.05.2018.00.00", xlab = "Snow water equivalent")
+
+# Histogram of Soil temperature 
+hist(data[,11], main= "Histogram of Soil temperature at X01.05.2018.00.00", xlab = "Soil temperature")
+
+# Histogram of Soil Moisture
+hist(data[,12], main= "Histogram of Soil Moisture at X01.05.2018.00.00", xlab = "Soil Moisture")
+
+
+# Extract location you want to work with 
+data <- data %>%
+  filter(X == lat & X.1 == long)
+
+# Number of columns of the dataset  
+i <- ncol(data)
+
+# create a new dataset by extracting by sequnce of 10 intervals
+data <- data.frame(
+  Q2 = as.numeric(data[,seq(from = 3, to = i, by = 10)]),
+  PSFC = as.integer(data[,seq(from = 4, to = i, by = 10)]),
+  U10 = as.numeric(data[,seq(from = 5, to = i, by = 10)]),
+  V10 = as.numeric(data[,seq(from = 6, to = i, by = 10)]),
+  Q2 = as.numeric(data[,seq(from = 7, to = i, by = 10)]),
+  RAINC = as.numeric(data[,seq(from = 8, to = i, by = 10)]),
+  RAINNC = as.numeric(data[,seq(from = 9, to = i, by = 10)]),
+  SNOW = as.numeric(data[,seq(from = 10, to = i, by = 10)]),
+  TSLB = as.numeric(data[,seq(from = 11, to = i, by = 10)]),
+  SMOIS = as.numeric(data[,seq(from = 12, to = i, by = 10)]),
+  DATETIME = seq(as.POSIXct("2018-05-01 00:00:00"), as.POSIXct("2018-05-31 21:00:00"), by = "3 hour")
+)
+
+# Preprocess dataset
+data <- data %>%
+  select(DATETIME, Q2)
+
+# Time series plot
+ggplot(data, aes(x = DATETIME, y = Q2)) +
+  geom_line(color = "blue") +
+  labs(title = "2- meter specific humidity Over Time",
+       x = "Date and Time",
+       y = "2- meter specific humidity") +
+  theme_minimal()
+```
+
+***Create a variable to represent time***
+
+```{r}
+data <- data %>%
+  mutate(TIME = as.numeric(difftime(DATETIME, min(DATETIME), units = "hours")))
+
+View(data)
+
+# Perform ADF test before performing
+adf_result1 <- adf.test(data$Q2)
+
+```
+
+***Split the data into training and test sets***
+
+```{r}
+set.seed(123)
+train_indices <- sample(1:nrow(data), 0.7 * nrow(data))
+train_data <- data[train_indices, ]
+test_data <- data[-train_indices, ]
+```
+
+***Linear Regression model***
+
+```{r}
+
+# Fit a linear model on the training set
+model_lm <- lm(Q2 ~ TIME, data = train_data)
+
+# Predict Q2 values for the test set
+predictions_lm <- predict(model_lm, newdata = test_data)
+# Calculate the root mean squared error (RMSE)
+rmse_lm <- sqrt(mean((data$Q2 - predictions_lm)^2))
+```
+
+***Build the SVR model***
+
+```{r}
+
+# SVR model linear
+# Fit a SVR model on the training set using kernel = linear
+model_svr_linear <- svm(Q2 ~ TIME, data = train_data, kernel = "linear")
+# Display the SVR model summary
+# Predict 2- meter specific humidity values for the test set using the SVR model
+predictions_svr_linear <- predict(model_svr_linear, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_linear <- sqrt(mean((data$Q2 - predictions_svr_linear)^2))
+
+# SVR model radial
+# Fit a SVR model on the training set using kernel = radial
+model_svr_radial <- svm(Q2 ~ TIME, data = train_data, kernel = "radial")
+# Display the SVR model summary
+
+# Predict 2- meter specific humidity values for the test set using the SVR model
+predictions_svr_radial <- predict(model_svr_radial, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_radial <- sqrt(mean((data$Q2 - predictions_svr_radial)^2))
+
+
+# SVR model poly
+# Fit a SVR model on the training set using kernel = poly
+model_svr_poly <- svm(Q2 ~ TIME, data = train_data, kernel = "poly")
+# Display the SVR model summary
+summary(model_svr_poly)
+# Predict 2- meter specific humidity values for the test set using the SVR model
+predictions_svr_poly <- predict(model_svr_poly, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_poly <- sqrt(mean((data$Q2 - predictions_svr_poly)^2))
+
+# DT model 
+# Fit a DT model on the training set
+model_dt <- rpart(Q2 ~ TIME, data = train_data)
+# Display the SVR model summary
+summary(model_dt)
+# Predict  for the test set using the SVR model
+predictions_dt <- predict(model_dt, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_dt <- sqrt(mean((data$Q2 - predictions_dt)^2))
+
+# RF n100 model
+# Fit a RF n100 model on the training set
+model_rf_n100 <- randomForest(Q2 ~ TIME, data = train_data, ntree=100)
+# Display the SVR model summary
+summary(model_rf_n100)
+# Predict 2- meter specific humidity values for the test set using the SVR model
+predictions_rf_n100 <- predict(model_rf_n100, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n100 <- sqrt(mean((data$Q2 - predictions_rf_n100)^2))
+
+# RF n200 model
+# Fit a RF n200 model on the training set
+model_rf_n200 <- randomForest(Q2 ~ TIME, data = train_data, ntree=200)
+# Display the SVR model summary
+summary(model_rf_n200)
+# Q2 values for the test set using the SVR model
+predictions_rf_n200 <- predict(model_rf_n200, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n200 <- sqrt(mean((data$Q2 - predictions_rf_n200)^2))
+
+# RF n500 model
+# Fit a RF n500 model on the training set
+model_rf_n500 <- randomForest(Q2 ~ TIME, data = train_data, ntree=500)
+# Display the SVR model summary
+#summary(model_rf_n500)
+# Predict 2- meter specific humidity values for the test set using the SVR model
+predictions_rf_n500 <- predict(model_rf_n500, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n500 <- sqrt(mean((data$Q2 - predictions_rf_n500)^2))
+
+# Plot the actual vs. predicted values for the Linear Regression, SVR, Random Forest and ARIMA model
+p1 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_lm), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Linear Regression: Actual vs. Predicted 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p2 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_svr_radial), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR RBF: Actual vs. 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted2- meter specific humidity") +
+  theme_minimal()
+
+p3 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_svr_linear), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR LINEAR: Actual vs. 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p4 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_svr_poly), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR POLY: Actual vs. 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p5 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_dt), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "DT: Actual vs. Predicted 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p6 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_rf_n100), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n100: Actual vs. Predicted 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p7 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_rf_n200), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n200: Actual vs. Predicted 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity") +
+  theme_minimal()
+
+p8 <- ggplot() +
+  geom_point(data = test_data, aes(x = Q2, y = predictions_rf_n500), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n500: Actual vs. Predicted 2- meter specific humidity",
+       x = "Actual 2- meter specific humidity",
+       y = "Predicted 2- meter specific humidity ") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3,p4, p5, p6, p7, p8, ncol = 8)
+
+# ARIMA model
+# Determine the number of hours in the dataset
+n_hours <- nrow(data)
+# Convert the dataset to a time series object
+Q2_ts <- ts(data$Q2, start = c(2018, 5), frequency = 8 * 31)
+View(Q2_ts)
+# Split the data into training and testing sets
+train_end_idx <- as.integer(n_hours * 0.7)
+train_data <- Q2_ts[1:train_end_idx]
+test_data <- Q2_ts[(train_end_idx + 1):n_hours]
+
+
+# Fit the ARIMA model
+arima_model <- auto.arima(train_data, seasonal = TRUE, stepwise = TRUE)
+# Forecast using the ARIMA model
+arima_forecast <- forecast(arima_model, h = length(test_data))
+#print(arima_model)
+#Calculate the Root Mean Squared Error (RMSE)
+rmse_arima <- sqrt(mean((test_data - arima_forecast$mean)^2))
+#Display the performance metrics
+
+# Model diagnostic for ARIMA model
+checkresiduals(arima_model)
+#Plot histogram of residuals
+hist(arima_model$residuals, main = "Histogram of ARIMA Model Residuals", xlab = "Residuals", col = "lightblue")
+# Perform Ljung-Box test
+#Box.test(arima_model$residuals, lag = 10, type = "Ljung-Box", fitdf = arima_model$p + arima_model$q)
+
+# Outputs
+cat("Missing values:",missing_values)
+cat("missing values after mean imputation:", missing_values_ami)
+cat("RMSE linear model:", rmse_lm)
+cat("RMSE SVR RADIAL:", rmse_svr_radial)
+cat("RMSE SVR LINEAR:", rmse_svr_linear)
+cat("RMSE SVR POLY:", rmse_svr_poly)
+cat("RMSE DT:", rmse_dt)
+cat("RMSE RF n100:", rmse_rf_n100)
+cat("RMSE RF n200:", rmse_rf_n200)
+cat("RMSE RF n500:", rmse_rf_n500)
+cat("RMSE ARIMA Model:", rmse_arima)
+```
+
+```{r}
+# Create a data frame with RMSE values
+rmse_values <- data.frame(
+  Model = c("Linear", "SVR Radial", "SVR Linear", "SVR Poly", "DT", "RF n100", "RF n200", "RF n500", "ARIMA"),
+  RMSE = c(1.474407, 1.415862, 1.462017, 1.392339, 1.549244, 1.673142, 1.682509, 1.682782, 1.488062)
+)
+
+# Create the bar plot
+barplot <- ggplot(rmse_values, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_bar(stat = "identity") +
+  labs(title = "RMSE Values for Different Models",
+       x = "Model",
+       y = "RMSE") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Display the bar plot
+print(barplot)
+
+
+```
